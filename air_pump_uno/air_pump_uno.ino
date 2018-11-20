@@ -1,5 +1,5 @@
 /*
-
+Update push
 Last Edit: 11/18/18
 
 Control code for air pump. Uses pressure gage to keep output pressure range between pressure_max and pressure_min.
@@ -28,6 +28,7 @@ void setup() {
   pinMode(pump,OUTPUT);
   
   Serial.begin(9600); 
+  delay(1000);
   Serial.println("Let's go!");
   // Run the following, enter slope and int values below, then comment out "run_pressure_calibration()"
 //  run_pressure_calibration();
@@ -41,9 +42,9 @@ void loop() {
   int toggle;
     
   unsigned long current_time;
-  unsigned long wait_time = 1000;
+  unsigned long wait_time = 0;
   unsigned long last_time = 0;
-  
+  int output_pwm=0;
   
   digitalWrite(pump,LOW);
   Serial.println("Press Enter to start program.");
@@ -55,28 +56,46 @@ void loop() {
     output_pressure = (float) slope1*analogRead(A0)+int1;
     Serial.print(output_pressure);
     Serial.print(" ");
-    if(output_pressure<pressure_max && toggle==0){
-      digitalWrite(pump,HIGH);
-    }
-    else {
-      digitalWrite(pump,LOW);
-      toggle=1;
-      if(output_pressure < pressure_min) toggle=0;
-    }
-    
+//    if(output_pressure<pressure_max && toggle==0){
+//      digitalWrite(pump,255);
+//    }
+//    else {
+//      digitalWrite(pump,140);
+//      toggle=1;
+//      if(output_pressure < pressure_min) toggle=0;
+//    }
+//    
     if (current_time > last_time + wait_time){
       last_time=current_time;
-      
-      for(int i = 0; i<4;i++){
-        valve_state[i] =! valve_state[i];
-        digitalWrite(valve[i],valve_state[i]);
+      int diff = output_pressure - pressure_max;
+      if(diff < 0 && output_pwm <= 255){
+        if(diff < -2) output_pwm = output_pwm + 5;
+        else output_pwm++;
       }
-      
+      else if (diff >=0 && output_pwm > 0) output_pwm--;      
+//      if (output_pwm == 255){
+//        output_pwm--;
+//        Serial.print("Max output!!!"); 
+//        Serial.print(" ");
+//      }
+      analogWrite(pump,output_pwm);
     }
-    for(int i = 0; i<4;i++){
-      Serial.print(valve_state[i]);
-      Serial.print(" ");
-    }
+    Serial.print(output_pwm);
+    Serial.print(" ");
+    
+//    if (current_time > last_time + wait_time){
+//      last_time=current_time;
+//      
+//      for(int i = 0; i<4;i++){
+//        valve_state[i] =! valve_state[i];
+//        digitalWrite(valve[i],valve_state[i]);
+//      }
+//      
+//    }
+//    for(int i = 0; i<4;i++){
+//      Serial.print(valve_state[i]);
+//      Serial.print(" ");
+//    }
     Serial.println();
   }
   
@@ -107,4 +126,3 @@ void run_pressure_calibration(){
   Serial.println("int1 = ");
   Serial.println(int1,DEC);
 }
-
