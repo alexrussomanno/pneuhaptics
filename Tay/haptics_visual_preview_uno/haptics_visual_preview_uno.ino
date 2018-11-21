@@ -140,6 +140,24 @@ void updateCueState(int x) {
 
 //========================================
 
+/*
+Alex
+void button_status(int x){
+
+  if(analogRead(FSR_PIN[x]) > activateButton && toggle == 0) {
+      activateLedAndOrValve(x, LOW, gameMode);
+      toggle=1;
+      return 1;
+      activateLedAndOrValve(x, LOW, gameMode);
+      
+    }
+  if (toggle==1 && analogRead(FSR_PIN[x]) < deactivateButton){
+    toggle = 0;
+  }
+}
+
+*/
+
 int ramping(int x, unsigned long previousMillis, unsigned long waitTime) {
   // This function ramps the LED and valves 
 
@@ -147,6 +165,7 @@ int ramping(int x, unsigned long previousMillis, unsigned long waitTime) {
     activateLedAndOrValve(x, LOW, gameMode);
     return 1;
   }
+  // if(toggle[x]==0)
   else{
     if (currentMillis - previousMillis >= waitTime + 3 * rampInterval){
       // light the 4th LED
