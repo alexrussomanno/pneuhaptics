@@ -1,8 +1,10 @@
 
+                                                                                
 // For Arduino UNO
 int SER_Pin = 3;  // data
 int SRCLK_Pin = 4; // clock
 int RCLK_Pin = 5;  // latch
+int piezoPin = 9; // position of speaker
 
 /*        TPIC6C595      
  *           ___
@@ -23,67 +25,88 @@ int RCLK_Pin = 5;  // latch
 boolean register_value[num_registers];
 
 // --------CONSTANTS (won't change)---------------
-//const int valve[] = {2,3,4,5,8,9,10,1138,40,42,44,39,41,43,45};  // assign valves to pin
-//const int led[] = {22,24,26,28,30,32,34,36,23,25,27,29,31,33,35,37};  // assign led to pin
 const int FSR_PIN[] = {A2,A3,A4,A5};
 
-const unsigned long rampInterval = 300  ; // number of millisecs in each ramp steps
+unsigned long rampInterval = 500  ; // number of millisecs in each ramp steps (500 is the standard)
 const int activateButton = 500;  // this is the minimum register value when a button is pressed. This value is based on analogRead of the FSR_PIN
-
-// 1 = visual cues, 2 = haptics cues, 3 = both haptics and visual 
-const int gameMode = 1;
+const int deactivateButton = 80;
+unsigned long flutter = 50;   // the rate at which the fourth dot of led or valve turns on and off
 
 //------------ VARIABLES (will change)---------------------
 
-boolean cueState[] = {LOW,LOW,LOW,LOW};           //   LOW = off
-int toggle[] = {0,0,0,0};
-
-unsigned long currentMillis = 0;    // stores the value of millis() in each iteration of loop()
-unsigned long previousMillis[] = {0,0,0,0};
-
-
+// 1 = visual cues, 2 = haptics cues, 3 = both haptics and visual 
+int gameMode = 1;
 // Set minimum and maximum wait time between press-button-cues
 unsigned long minWaitTime = rampInterval;
-unsigned long maxWaitTime = 7000;
-unsigned long waitTime[] = {minWaitTime,minWaitTime,minWaitTime,minWaitTime };  // Time LED is OFF (wait time)
+unsigned long maxWaitTime = 5000;
+unsigned long waitTime[] = {0,0,0,0};  // Initialize waitTime
+int cycle = 40;    // number of cycle before game ends
+boolean clickFeel = HIGH;
+int onBeat = 0;    // This variable subtracts the remainder from waitTime so that waitTime is a multiple of rampInterval
 
-int tooEarly = 0;
+int numPress = 0;    // sum of the number of times button 0,1,2,3 has been pressed
+boolean cueState[] = {LOW,LOW,LOW,LOW};
+boolean dotState[] = {LOW,LOW,LOW,LOW};  
+int toggle[] = {0,0,0,0};
+unsigned long currentMillis = 0;    // stores the value of millis() in each iteration of loop()
+unsigned long previousMillis[] = {0,0,0,0};
+unsigned long previousFlutterMillis[] = {0,0,0,0};
 
 //========================================
 
-void setup(){
+void setup(){ 
   pinMode(SER_Pin, OUTPUT);
   pinMode(RCLK_Pin, OUTPUT);
   pinMode(SRCLK_Pin, OUTPUT);
   for(int i=0; i < 4; i++){
     pinMode(FSR_PIN[i], INPUT);
   }
-  
+  randomSeed(analogRead(0));
   Serial.begin(9600);
+  // if analog input pin 0 is unconnected, random analog
+  // noise will cause the call to randomSeed() to generate
+  // different seed numbers each time the sketch runs.
+  // randomSeed() will then shuffle the random function.    
+  Serial.print("gameMode\t"); Serial.println(gameMode);
+  Serial.print("cycle\t"); Serial.println(cycle);
+  Serial.print("rampInterval\t"); Serial.println(rampInterval);
+  Serial.print("minWaitTime\t"); Serial.println(minWaitTime);
+  Serial.print("maxWaitTime\t"); Serial.println(maxWaitTime);
+  // Generate random waitTime 
+  unsigned long waitTime[] = {random(10)*rampInterval,random(10)*rampInterval,random(10)*rampInterval,random(10)*rampInterval};
   set_all_registers(LOW);
   update_register_values();
+  
+  // Start loop once enter is pressed
+  //while (Serial.read() != 10);
 }               
 
 void loop(){
-
-// every time "ENTER" is pressed in the Serial port
-//  int select_register=31;
-//  while (Serial.read() != 10);
-//  if(register_value[select_register]==HIGH) register_value[select_register]=LOW;
-//  else register_value[select_register]=HIGH;    
-//  Serial.println(register_value[select_register]);
-
   // Notice that none of the action happens in loop() apart from reading millis()
-  // updateCueState calls the functions that have the action code
-
-  currentMillis = millis();   // capture the latest value of millis(). This is equivalent to noting the time from a clock
-  for (int x=0; x < 4; x++) {
-    updateCueState(x);
+  // updateCueState checks if a user presses a button on time and updates a new waitTime
+  if(numPress <= cycle){
+    // Keep running until total button press is equal to the variable 'cycle'
+    currentMillis = millis();   // capture the latest value of millis(). This is equivalent to noting the time from a clock
+    for (int x=2; x < 4; x++) {
+      updateCueState(x);
+        if(gameMode == 1 && clickFeel == HIGH){
+          if(analogRead(FSR_PIN[x]) > activateButton){
+            activateLedAndOrValve(x,LOW,2);
+          }
+          else{
+            activateLedAndOrValve(x,HIGH,2);
+          }
+        }
+    }    
   }
-    
-
+  else{
+    // Shut all lights and valves
+    activateLedAndOrValve(0,LOW,3);
+    activateLedAndOrValve(1,LOW,3);
+    activateLedAndOrValve(2,LOW,3);
+    activateLedAndOrValve(3,LOW,3);
+  }
 }
-
 // Updates the state of the power shift registers to correspond to the boolean array register_value
 void  update_register_values(){
   digitalWrite(RCLK_Pin, LOW);
@@ -94,9 +117,7 @@ void  update_register_values(){
     digitalWrite(SRCLK_Pin, LOW);
   }
   digitalWrite(RCLK_Pin, HIGH);
-
 }
-
 // Sets all registers HIGH or LOW
 void set_all_registers(boolean state){
   for(int i = 0; i < num_registers; i++){
@@ -104,115 +125,105 @@ void set_all_registers(boolean state){
   }
 } 
 
+//========================================================================
+
 void updateCueState(int x) {
 
-  if (cueState[x] == LOW) {
-    // Count down before press-button-cue-trigger 
-    // Serial.println(pos_A_waitTime - currentMillis + previousPos_A_Millis+2);
-   
+  if (cueState[x] == LOW) {    
     // Start ramping when waitTime expires
-    tooEarly = ramping(x,previousMillis[x],waitTime[x]);    
-    if(tooEarly == 1){ // This means that the user pressed too early    
-      // Generate new wait time and restart
-      Serial.print("response");Serial.print(x);Serial.print(":"); Serial.print(currentMillis); Serial.println(";");
-      waitTime[x] = random(minWaitTime,maxWaitTime);
-      previousMillis[x] = currentMillis;
-    } 
+    ramping(x,previousMillis[x],waitTime[x]);   
   }
   else {  // if cueState is HIGH  
-    // If the button is pressed, turn off LED 
-    if(analogRead(FSR_PIN[x]) > activateButton && toggle[x]==0){
-      toggle[x]=1;
-      
-      // Turn off LED
+    // Start flutter
+    if (currentMillis-previousFlutterMillis[x] >= flutter){
+      previousFlutterMillis[x]=currentMillis;
+      if(dotState[x]==LOW){
+        dotState[x]=HIGH;
+      }
+      else{
+        dotState[x]=LOW;
+      }
+      // start flutter
+      activateOneDot(3,x,dotState[x],gameMode);
+    }
+    // Wait for button to be pressed
+    if(buttonStatus(x)==1){
+      // Turn off LED or Valves
       cueState[x] = LOW;      
-      // Check which gameMode we are in and shut off valve/led
-      activateLedAndOrValve(x,cueState[x],gameMode);  
-      Serial.print("response");Serial.print(x);Serial.print(":"); Serial.print(currentMillis); Serial.println(";");   
-      
-      // Generate new wait time
-      waitTime[x] = random(minWaitTime,maxWaitTime);
-      // Update and save the time when the button is pressed
-      previousMillis[x] = currentMillis;      
     }
   }
 }
 
-//========================================
+//========================================================================
 
-/*
-Alex
-void button_status(int x){
-
-  if(analogRead(FSR_PIN[x]) > activateButton && toggle == 0) {
-      activateLedAndOrValve(x, LOW, gameMode);
-      toggle=1;
-      return 1;
-      activateLedAndOrValve(x, LOW, gameMode);
-      
-    }
-  if (toggle==1 && analogRead(FSR_PIN[x]) < deactivateButton){
-    toggle = 0;
-  }
-}
-
-*/
-
-int ramping(int x, unsigned long previousMillis, unsigned long waitTime) {
-  // This function ramps the LED and valves 
-
-  if(analogRead(FSR_PIN[x]) > activateButton) {
+int buttonStatus(int x){
+  if(analogRead(FSR_PIN[x]) > activateButton && toggle[x] == 0) {
+    Serial.print(x); Serial.print("\t"); Serial.print(previousMillis[x] + waitTime[x] + 3*rampInterval); Serial.print("\t"); Serial.println(currentMillis);
     activateLedAndOrValve(x, LOW, gameMode);
+    toggle[x] = 1;
+    waitTime[x] = random(minWaitTime,maxWaitTime);
+    onBeat = waitTime[x] % rampInterval;
+    waitTime[x] = waitTime[x]- onBeat;
+    previousMillis[x] = currentMillis;   
+    numPress++;
     return 1;
   }
-  // if(toggle[x]==0)
-  else{
-    if (currentMillis - previousMillis >= waitTime + 3 * rampInterval){
-      // light the 4th LED
-      activateOneDot(3,x,HIGH,gameMode);   
-      // Time is up, change cueState to HIGH
-      cueState[x] = HIGH;
-      
-      // Check which gameMode we are in and trigger cue
-      // activateLedAndOrValve(x,cueState[x],gameMode);
-      
-      // Update and save the time when cue is triggered
-      // previousMillis[x] = currentMillis;   
-      return 0;  
-    }
-    else if (currentMillis - previousMillis >= waitTime + 2 * rampInterval){
-      // turn on 3rd dot of valve/led
-      activateOneDot(2,x,HIGH,gameMode);    
-      return 0;
-    }
-    else if (currentMillis - previousMillis >= waitTime + rampInterval){
-      // turn on 2nd dot of valve/led
-      activateOneDot(1,x,HIGH,gameMode);
-      return 0;
-    }  
-    else if (currentMillis - previousMillis >= waitTime){
-      
-      // turn on 1st dot of valve/led
-      activateOneDot(0,x,HIGH,gameMode);
-      // Print time when ramping starts
-      Serial.print("Ramping");Serial.print(x);Serial.print(":"); Serial.print(currentMillis ); Serial.println(";");      
-      return 0;
-    }    
-  } 
+  else if (analogRead(FSR_PIN[x]) < deactivateButton && toggle[x] == 1){
+    toggle[x] = 0;
+    return 0;
+  }
 }
 
-//======================================
+//========================================================================
+                                                                          
+void ramping(int x, unsigned long previousMillis, unsigned long waitTime) {
+  
+  // This function ramps the LED and valves 
+  // Check and update button status. If a button is pressed, it returns a 1
+  if(buttonStatus(x)==1){
+    if(currentMillis - previousMillis < waitTime + 3 * rampInterval && currentMillis - previousMillis >= waitTime){
+      // Button is pressed before cue
+      // Beep at the user for 250 millis
+      tone(piezoPin,1000,250);      
+    }
+  }
+  else{
+    // Start Ramp
+    if (currentMillis - previousMillis >= waitTime && currentMillis - previousMillis < waitTime + rampInterval){   
+      // turn on 1st dot of valve/led
+      activateOneDot(0,x,HIGH,gameMode); 
+    }
+    else if (currentMillis - previousMillis >= waitTime + rampInterval && currentMillis - previousMillis < waitTime + 2 * rampInterval){
+      // turn on 2nd dot of valve/led
+      activateOneDot(1,x,HIGH,gameMode);
+    }  
+    else if (currentMillis - previousMillis >= waitTime + 2 * rampInterval && currentMillis - previousMillis < waitTime + 3 * rampInterval){
+      // turn on 3rd dot of valve/led
+      activateOneDot(2,x,HIGH,gameMode);    
+    }    
+    else if (currentMillis - previousMillis >= waitTime + 3 * rampInterval){
+      // light the 4th LED
+      //activateOneDot(3,x,HIGH,gameMode);
+      activateLedAndOrValve(x,HIGH,gameMode);  
+      // Time is up, change cueState to HIGH
+      cueState[x] = HIGH;
+      // Update and save the time when cue is triggered
+      // previousMillis[x] = currentMillis;   
+    }       
+  }
+}
+
+//========================================================================
 
 // This function controls the state of 4 LEDs
 void ledControl(int xy, boolean state){
   for(int i=xy; i < xy+4; i++){
     register_value[i]=state;
     update_register_values();
-//    digitalWrite(led[i],state);
   }  
 }
 
-//======================================
+//========================================================================
 
 // This function controls the state of 4 valves
 void valveControl(int xy, boolean state){
@@ -222,7 +233,7 @@ void valveControl(int xy, boolean state){
   }  
 }
 
-//======================================
+//========================================================================
 
 // This function controls the state of 4 LEDs and Valves
 void ledValveControl(int xy, boolean state){
@@ -233,7 +244,7 @@ void ledValveControl(int xy, boolean state){
   }  
 }
 
-//======================================
+//========================================================================
 
 void activateLedAndOrValve(int x, boolean state, int gameMode){
   switch (gameMode){
@@ -254,7 +265,7 @@ void activateLedAndOrValve(int x, boolean state, int gameMode){
   }
 } 
 
-//======================================
+//========================================================================
 
 void activateOneDot(int dot, int x, boolean state, int gameMode){
   switch (gameMode) {
@@ -270,16 +281,10 @@ void activateOneDot(int dot, int x, boolean state, int gameMode){
       break;
     case 3:    // both haptics and visual cue
       register_value[4*x+dot]=state;
-      register_value[4*x+dot+16]=state;
+      register_value[4*x+dot+16  ]=state;
       update_register_values();
       break;
     default:
       Serial.println("gameMode out of bounds");
   }    
 } 
-
-//======================================
-
-int toggleState(int x){
-  
-}
